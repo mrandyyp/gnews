@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GNews Content Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              serif: ['Merriweather', 'serif'],
+            },
+            colors: {
+              primary: {
+                50: '#f5f3ff',
+                100: '#ede9fe',
+                200: '#ddd6fe',
+                500: '#8b5cf6', // Violet
+                600: '#7c3aed',
+                700: '#6d28d9',
+                900: '#4c1d95',
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      body {
+        background-color: #f3f4f6; /* Gray 100 */
+        color: #111827; /* Gray 900 */
+      }
+      .no-scrollbar::-webkit-scrollbar {
+          display: none;
+      }
+      .no-scrollbar {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+      }
+      /* Typography for Editor/Reader */
+      .prose { max-width: 65ch; color: #374151; }
+      .prose h1 { color: #111827; font-weight: 800; font-family: 'Inter', sans-serif; margin-bottom: 1rem; line-height: 1.2; }
+      .prose h2, .prose h3 { color: #1f2937; font-weight: 700; font-family: 'Inter', sans-serif; margin-top: 1.5em; margin-bottom: 0.75em; }
+      .prose p { margin-bottom: 1.25em; line-height: 1.75; }
+      .prose ul { list-style-type: disc; padding-left: 1.5em; margin-bottom: 1.25em; }
+      .prose a { color: #7c3aed; text-decoration: underline; font-weight: 500; }
+      .prose blockquote { border-left-color: #ddd6fe; color: #4b5563; font-style: italic; }
+      .prose img { border-radius: 0.5rem; }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "dompurify": "https://esm.sh/dompurify@3.0.6",
+    "@supabase/supabase-js": "https://aistudiocdn.com/@supabase/supabase-js@^2.86.2"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

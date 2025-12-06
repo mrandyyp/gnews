@@ -1,0 +1,5 @@
+{
+  "name": "GNews Discover Hub",
+  "description": "A modern, responsive news aggregator interface featuring real-time article discovery and AI-powered summaries using Gemini 2.5 Flash.",
+  "requestFramePermissions": []
+}
