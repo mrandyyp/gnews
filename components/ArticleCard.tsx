@@ -9,6 +9,18 @@ interface ArticleCardProps {
 export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onRead }) => {
   const [imgSrc, setImgSrc] = useState(article.image);
 
+  // Helper to extract domain from URL
+  const getDomain = (url: string, fallbackSource: string) => {
+    try {
+      if (!url) return fallbackSource;
+      const hostname = new URL(url).hostname;
+      // Remove www. for cleaner look
+      return hostname.replace(/^www\./, '');
+    } catch (e) {
+      return fallbackSource;
+    }
+  };
+
   return (
     <div 
         className="bg-white rounded-lg border border-slate-200 overflow-hidden hover:shadow-lg hover:border-primary-300 transition-all duration-200 group relative cursor-pointer h-36 md:h-[22rem]" 
@@ -34,8 +46,8 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onRead }) => 
         <div className="flex flex-col justify-between p-4 w-2/3 md:w-full h-full">
             <div>
                 <div className="flex flex-col items-start mb-2">
-                    <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-wide mb-1">
-                    {article.source}
+                    <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-wide mb-1 truncate max-w-full">
+                    {getDomain(article.url, article.source)}
                     </span>
                     <span className="text-[10px] text-slate-400">
                     {article.date}
