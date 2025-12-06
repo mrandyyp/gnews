@@ -276,7 +276,7 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ article, currentLocale
             ${activeTab === 'source' ? 'block' : 'hidden sm:flex'}
         `}>
             <div className="px-6 py-3 border-b border-slate-200 bg-white/50 backdrop-blur flex justify-between items-center sticky top-0 z-10">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Original Source</span>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{article.url}</span>
                 
                 <div className="flex items-center space-x-3">
                      {article.url ? (
