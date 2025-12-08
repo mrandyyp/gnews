@@ -26,26 +26,56 @@ const App: React.FC = () => {
   
   // URL/Manual Input State
   const [showUrlInput, setShowUrlInput] = useState(false);
-  const [importMode, setImportMode] = useState<'url' | 'manual'>('url');
+  // Added 'detik' to the import types
+  const [importMode, setImportMode] = useState<'url' | 'manual' | 'detik'>('url');
   const [inputUrl, setInputUrl] = useState('');
   const [manualTitle, setManualTitle] = useState('');
   const [manualContent, setManualContent] = useState('');
   const [importLocale, setImportLocale] = useState<LocaleOption>('id-ID');
   const [manualParsedData, setManualParsedData] = useState<ParsedArticle | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Initialize Auth
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setAuthLoading(false);
-    });
+    // Get initial session
+    const initSession = async () => {
+        try {
+            const { data: { session }, error } = await supabase.auth.getSession();
+            if (error) {
+                console.warn("Auth session error:", error.message);
+                // If token is invalid, ensure we are signed out locally
+                if (error.message.includes("Refresh Token")) {
+                    await supabase.auth.signOut();
+                }
+                setSession(null);
+            } else {
+                setSession(session);
+            }
+        } catch (e) {
+            console.error("Unexpected auth initialization error", e);
+            setSession(null);
+        } finally {
+            setAuthLoading(false);
+        }
+    };
 
+    initSession();
+
+    // Listen for changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+          setSession(null);
+          setArticles([]); // Clear content on logout
+      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          setSession(session);
+      } else if (event === 'jorne' || session) {
+          // Catch-all for other events that provide a session
+          setSession(session);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -99,60 +129,115 @@ const App: React.FC = () => {
     setSearchTerm('');
   };
   
-  const handleImportSubmit = (e: React.FormEvent) => {
+  const handleImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsProcessing(true);
     
     // Update global locale to match the user's choice in the import modal
     setSelectedLocale(importLocale);
 
-    if (importMode === 'url') {
-        if (!inputUrl) return;
-        const tempArticle: Article = {
-            url: inputUrl,
-            title: 'Loading External Source...',
-            source: new URL(inputUrl).hostname,
-            date: new Date().toLocaleDateString(),
-            image: '',
-            timestamp: Date.now()
-        };
-        setManualParsedData(null); // Clear manual data
-        setReadingArticle(tempArticle);
-    } else {
-        if (!manualTitle || !manualContent) return;
-        const tempArticle: Article = {
-            url: '',
-            title: manualTitle,
-            source: 'Manual Input',
-            date: new Date().toLocaleDateString(),
-            image: '',
-            timestamp: Date.now()
-        };
+    try {
+      if (importMode === 'detik') {
+        if (!inputUrl) throw new Error("URL is required");
+
+        const response = await fetch(`https://api.gnews.media/api/article?url=${encodeURIComponent(inputUrl)}`);
+        if (!response.ok) throw new Error("Failed to fetch Detik article");
         
-        // Construct pre-parsed data
+        const data = await response.json();
+        
+        if (data.status === 'error') {
+           throw new Error("API returned error status");
+        }
+
+        // Parse content_text to HTML paragraphs
+        const formattedContent = (data.content_text || '')
+            .split('\n')
+            .filter((p: string) => p.trim() !== '')
+            .map((p: string) => `<p>${p}</p>`)
+            .join('');
+
+        const articleDate = data.published_at ? new Date(data.published_at) : new Date();
+
+        const tempArticle: Article = {
+            url: data.url || inputUrl,
+            title: data.title || 'No Title',
+            source: 'Detik/Partner',
+            date: articleDate.toLocaleDateString(),
+            image: data.featured_image?.url || '',
+            timestamp: articleDate.getTime()
+        };
+
         const parsed: ParsedArticle = {
-            title: manualTitle,
-            content: manualContent, // Treat as HTML/Text
-            textContent: manualContent,
-            excerpt: manualContent.substring(0, 100) + '...',
-            byline: 'User Input',
-            siteName: 'Manual Source',
-            url: '',
-            image: '',
+            title: data.title || 'No Title',
+            content: formattedContent,
+            textContent: data.content_text || '',
+            excerpt: (data.content_text || '').substring(0, 150) + '...',
+            byline: 'Detik API',
+            siteName: 'Detik Import',
+            url: data.url || inputUrl,
+            image: data.featured_image?.url || '',
             format: 'html'
         };
 
         setManualParsedData(parsed);
         setReadingArticle(tempArticle);
-    }
 
-    setShowUrlInput(false);
-    setInputUrl('');
-    setManualTitle('');
-    setManualContent('');
+      } else if (importMode === 'url') {
+          if (!inputUrl) throw new Error("URL is required");
+          const tempArticle: Article = {
+              url: inputUrl,
+              title: 'Loading External Source...',
+              source: new URL(inputUrl).hostname,
+              date: new Date().toLocaleDateString(),
+              image: '',
+              timestamp: Date.now()
+          };
+          setManualParsedData(null); // Clear manual data
+          setReadingArticle(tempArticle);
+      } else {
+          // Manual
+          if (!manualTitle || !manualContent) throw new Error("Title and Content are required");
+          const tempArticle: Article = {
+              url: '',
+              title: manualTitle,
+              source: 'Manual Input',
+              date: new Date().toLocaleDateString(),
+              image: '',
+              timestamp: Date.now()
+          };
+          
+          // Construct pre-parsed data
+          const parsed: ParsedArticle = {
+              title: manualTitle,
+              content: manualContent, // Treat as HTML/Text
+              textContent: manualContent,
+              excerpt: manualContent.substring(0, 100) + '...',
+              byline: 'User Input',
+              siteName: 'Manual Source',
+              url: '',
+              image: '',
+              format: 'html'
+          };
+
+          setManualParsedData(parsed);
+          setReadingArticle(tempArticle);
+      }
+
+      setShowUrlInput(false);
+      setInputUrl('');
+      setManualTitle('');
+      setManualContent('');
+    } catch (err) {
+      console.error(err);
+      alert("Failed to process import. Please check the URL or input.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setSession(null);
   };
 
   const filteredArticles = useMemo(() => {
@@ -164,9 +249,9 @@ const App: React.FC = () => {
     );
   }, [articles, searchTerm]);
 
-  const openImportModal = () => {
+  const openImportModal = (mode: 'url' | 'manual' | 'detik' = 'url') => {
       setImportLocale(selectedLocale);
-      setImportMode('url'); // Default to URL
+      setImportMode(mode);
       setShowUrlInput(true);
   };
 
@@ -205,41 +290,51 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden scale-100 flex flex-col max-h-[90vh]">
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center shrink-0">
-                    <h3 className="text-lg font-bold text-slate-900">Import External Source</h3>
+                    <h3 className="text-lg font-bold text-slate-900">
+                        {importMode === 'detik' ? 'Import Detik Article' : 'Import External Source'}
+                    </h3>
                     <button onClick={() => setShowUrlInput(false)} className="text-slate-400 hover:text-slate-600">
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                 </div>
 
-                {/* Tabs */}
-                <div className="flex border-b border-slate-100 bg-slate-50/50 shrink-0">
-                    <button
-                        type="button"
-                        onClick={() => setImportMode('url')}
-                        className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${importMode === 'url' ? 'border-primary-600 text-primary-700 bg-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Import URL
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setImportMode('manual')}
-                        className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${importMode === 'manual' ? 'border-primary-600 text-primary-700 bg-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Manual Input
-                    </button>
-                </div>
+                {/* Tabs - Only show if not in specific Detik mode or if we want to allow switching. 
+                    Let's hide tabs if in Detik mode for focus, or just allow switching.
+                    User request: "tombol import detik di selah tombol import source", implies distinct action. 
+                    I'll hide the generic tabs if Detik is selected to keep the UI clean for that specific task.
+                */}
+                {importMode !== 'detik' && (
+                    <div className="flex border-b border-slate-100 bg-slate-50/50 shrink-0">
+                        <button
+                            type="button"
+                            onClick={() => setImportMode('url')}
+                            className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${importMode === 'url' ? 'border-primary-600 text-primary-700 bg-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Import URL
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setImportMode('manual')}
+                            className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${importMode === 'manual' ? 'border-primary-600 text-primary-700 bg-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Manual Input
+                        </button>
+                    </div>
+                )}
 
                 <form onSubmit={handleImportSubmit} className="p-6 overflow-y-auto">
                     <div className="space-y-4">
                         
-                        {importMode === 'url' ? (
+                        {(importMode === 'url' || importMode === 'detik') ? (
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">Paste Article URL</label>
+                                <label className="block text-sm font-medium text-slate-700 mb-2">
+                                    {importMode === 'detik' ? 'Paste Detik/Partner URL' : 'Paste Article URL'}
+                                </label>
                                 <div className="relative">
                                     <input 
                                         type="url" 
-                                        required={importMode === 'url'}
-                                        placeholder="https://example.com/article..." 
+                                        required
+                                        placeholder="https://..." 
                                         value={inputUrl}
                                         onChange={(e) => setInputUrl(e.target.value)}
                                         className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all text-sm"
@@ -247,6 +342,11 @@ const App: React.FC = () => {
                                     />
                                     <svg className="w-5 h-5 text-slate-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
                                 </div>
+                                {importMode === 'detik' && (
+                                    <p className="text-xs text-slate-500 mt-2">
+                                        Compatible with bola.net and detik network URLs.
+                                    </p>
+                                )}
                             </div>
                         ) : (
                             <div className="space-y-4">
@@ -254,7 +354,7 @@ const App: React.FC = () => {
                                     <label className="block text-sm font-medium text-slate-700 mb-2">Article Title</label>
                                     <input 
                                         type="text" 
-                                        required={importMode === 'manual'}
+                                        required
                                         placeholder="Enter title here..." 
                                         value={manualTitle}
                                         onChange={(e) => setManualTitle(e.target.value)}
@@ -264,7 +364,7 @@ const App: React.FC = () => {
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-2">Article Content</label>
                                     <textarea 
-                                        required={importMode === 'manual'}
+                                        required
                                         placeholder="Paste article content here..." 
                                         value={manualContent}
                                         onChange={(e) => setManualContent(e.target.value)}
@@ -275,6 +375,7 @@ const App: React.FC = () => {
                             </div>
                         )}
 
+                        {importMode !== 'detik' && (
                         <div className="pt-2">
                             <label className="block text-sm font-medium text-slate-700 mb-2">Source Content Language</label>
                             <div className="grid grid-cols-2 gap-3">
@@ -310,13 +411,16 @@ const App: React.FC = () => {
                                 </button>
                             </div>
                         </div>
+                        )}
                     </div>
 
+                    {importMode !== 'detik' && (
                     <p className="text-xs text-slate-500 mt-4 bg-slate-50 p-3 rounded border border-slate-100">
                         {importLocale === 'en-US' 
                             ? "We will translate the English content into a professional Indonesian article." 
                             : "We will rewrite the Indonesian content into a fresh Indonesian article with a professional journalistic tone."}
                     </p>
+                    )}
 
                     <div className="mt-6 flex justify-end space-x-3">
                         <button 
@@ -328,10 +432,11 @@ const App: React.FC = () => {
                         </button>
                         <button 
                             type="submit"
-                            className="px-4 py-2 text-sm font-bold text-white bg-primary-600 hover:bg-primary-700 rounded-lg shadow-sm hover:shadow-md transition-all flex items-center"
+                            disabled={isProcessing}
+                            className="px-4 py-2 text-sm font-bold text-white bg-primary-600 hover:bg-primary-700 rounded-lg shadow-sm hover:shadow-md transition-all flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            Start Processing
-                            <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                            {isProcessing ? 'Processing...' : 'Start Processing'}
+                            {!isProcessing && <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>}
                         </button>
                     </div>
                 </form>
@@ -359,11 +464,20 @@ const App: React.FC = () => {
               
               {/* Primary Action: Import URL */}
               <button
-                onClick={openImportModal}
+                onClick={() => openImportModal('url')}
                 className="hidden md:flex items-center px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 transition-all shadow-sm hover:shadow-md"
               >
                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
                 Import Source
+              </button>
+
+              {/* Action: Import Detik */}
+              <button
+                onClick={() => openImportModal('detik')}
+                className="hidden md:flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-all shadow-sm hover:shadow-md"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" /></svg>
+                Import Detik
               </button>
 
               <div className="h-6 w-px bg-slate-200 hidden md:block"></div>
@@ -457,13 +571,19 @@ const App: React.FC = () => {
         {/* Mobile Actions */}
         <div className="md:hidden grid grid-cols-2 gap-3 mb-6">
              <button
-                onClick={openImportModal}
+                onClick={() => openImportModal('url')}
                 className="flex items-center justify-center px-4 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 shadow-sm"
               >
                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
                 Import URL
               </button>
-             <div className="relative w-full">
+              <button
+                onClick={() => openImportModal('detik')}
+                className="flex items-center justify-center px-4 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 shadow-sm"
+              >
+                Detik Import
+              </button>
+             <div className="relative w-full col-span-2 mt-1">
                 <input
                     type="text"
                     placeholder="Search..."
