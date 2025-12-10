@@ -1,13 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Article } from '../types';
-import { parseArticleContent, ParsedArticle } from '../services/readabilityService';
+import { parseArticleContent, fetchWordpressArticle, ParsedArticle } from '../services/readabilityService';
 import DOMPurify from 'dompurify';
 
 interface ReaderModalProps {
   article: Article | null;
-  // currentLocale is no longer needed but kept optional to prevent breaking App.tsx usage temporarily if strictly typed, 
-  // though typically we can just remove it if we updated App.tsx too. 
-  // For safety in this specific file update, we just don't use it.
+  // currentLocale is no longer needed but kept optional to prevent breaking App.tsx usage temporarily if strictly typed
   currentLocale?: any; 
   initialParsedData?: ParsedArticle | null;
   onClose: () => void;
@@ -16,6 +14,7 @@ interface ReaderModalProps {
 export const ReaderModal: React.FC<ReaderModalProps> = ({ article, initialParsedData = null, onClose }) => {
   const [parsedData, setParsedData] = useState<ParsedArticle | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingStep, setLoadingStep] = useState<string>('Initializing...');
   const [error, setError] = useState<string | null>(null);
   
   // Source Copy State
@@ -38,6 +37,7 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ article, initialParsed
       setLoading(true);
       setError(null);
       setParsedData(null);
+      setLoadingStep('Fetching content...');
       
       // If manually parsed data is provided, skip fetch
       if (initialParsedData) {
@@ -46,15 +46,37 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ article, initialParsed
           return;
       }
 
-      parseArticleContent(article.url)
-        .then((data) => {
-          setParsedData(data);
-          setLoading(false);
-        })
-        .catch(err => {
-          setError(err.message || "Could not extract article content.");
-          setLoading(false);
-        });
+      const fetchContent = async () => {
+        try {
+            // Attempt 1: Standard Parser
+            try {
+                const data = await parseArticleContent(article.url);
+                if (!data.content || data.content.length < 100) {
+                     throw new Error("Content too short or empty");
+                }
+                setParsedData(data);
+                setLoading(false);
+            } catch (standardError) {
+                console.warn("Standard parser failed, attempting WordPress fallback...", standardError);
+                setLoadingStep('Standard parser failed. Trying WordPress API...');
+                
+                // Attempt 2: WordPress REST API Fallback
+                try {
+                    const wpData = await fetchWordpressArticle(article.url);
+                    setParsedData(wpData);
+                    setLoading(false);
+                } catch (wpError) {
+                    console.error("WordPress fallback failed", wpError);
+                    throw new Error("Could not extract content using standard parser or WordPress API.");
+                }
+            }
+        } catch (finalError: any) {
+            setError(finalError.message || "Failed to load content.");
+            setLoading(false);
+        }
+      };
+
+      fetchContent();
     }
   }, [article, initialParsedData]);
 
@@ -94,15 +116,100 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ article, initialParsed
 
   return (
     <div 
-        className="fixed inset-0 z-50 flex flex-col bg-slate-900/50 backdrop-blur-sm" 
+        className="fixed inset-0 z-50 flex flex-col bg-slate-900/60 backdrop-blur-sm" 
         aria-modal="true"
-        onClick={onClose} // Close modal when clicking backdrop
+        onClick={onClose}
     >
-      
+        {/* Custom Styles for Readability */}
+        <style>{`
+            .article-content {
+                font-family: 'Merriweather', serif;
+                color: #334155;
+            }
+            .article-content p {
+                margin-bottom: 1.8em;
+                line-height: 1.85;
+                font-size: 1.125rem; /* 18px */
+            }
+            .article-content h1, .article-content h2, .article-content h3, .article-content h4 {
+                font-family: 'Inter', sans-serif;
+                font-weight: 700;
+                color: #0f172a;
+                margin-top: 2.5em;
+                margin-bottom: 1em;
+                line-height: 1.3;
+            }
+            .article-content h2 { font-size: 1.5rem; border-bottom: 2px solid #f1f5f9; padding-bottom: 0.5rem; }
+            .article-content h3 { font-size: 1.25rem; }
+            .article-content ul, .article-content ol {
+                margin-bottom: 1.8em;
+                padding-left: 1.5em;
+                color: #334155;
+            }
+            .article-content li {
+                margin-bottom: 0.75em;
+                line-height: 1.7;
+                padding-left: 0.5em;
+            }
+            .article-content ul { list-style-type: disc; }
+            .article-content ol { list-style-type: decimal; }
+            .article-content img {
+                border-radius: 0.75rem;
+                margin: 2.5rem auto;
+                display: block;
+                max-width: 100%;
+                height: auto;
+                box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+            }
+            .article-content figure {
+                margin: 2.5rem 0;
+            }
+            .article-content figcaption {
+                text-align: center;
+                font-size: 0.875rem;
+                color: #64748b;
+                margin-top: 0.75rem;
+                font-family: 'Inter', sans-serif;
+            }
+            .article-content blockquote {
+                border-left: 4px solid #8b5cf6;
+                padding: 1.5rem;
+                margin: 2rem 0;
+                font-style: italic;
+                color: #475569;
+                background: #f8fafc;
+                border-radius: 0 0.5rem 0.5rem 0;
+            }
+            .article-content a {
+                color: #7c3aed;
+                text-decoration: underline;
+                text-underline-offset: 4px;
+                text-decoration-color: #ddd6fe;
+                transition: all 0.2s;
+            }
+            .article-content a:hover {
+                text-decoration-color: #7c3aed;
+                color: #6d28d9;
+            }
+            .article-content strong, .article-content b {
+                font-weight: 700;
+                color: #1e293b;
+            }
+            /* Code blocks if any */
+            .article-content pre {
+                background: #1e293b;
+                color: #f8fafc;
+                padding: 1rem;
+                border-radius: 0.5rem;
+                overflow-x: auto;
+                margin-bottom: 1.8em;
+            }
+        `}</style>
+
       {/* Modal Container */}
       <div 
-        className="flex-1 flex flex-col bg-white w-full max-w-4xl mx-auto md:my-6 md:rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-        onClick={(e) => e.stopPropagation()} // Prevent close when clicking inside the modal
+        className="flex-1 flex flex-col bg-white w-full max-w-3xl mx-auto md:my-6 md:rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
       >
         
         {/* 1. Header */}
@@ -174,20 +281,21 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ article, initialParsed
         </div>
         
         {/* 3. Content Area */}
-        <div className="flex-1 overflow-y-auto bg-white p-6 md:p-10 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto bg-white p-6 md:p-12 custom-scrollbar">
             {loading ? (
-                <div className="max-w-3xl mx-auto space-y-8 animate-pulse">
+                <div className="max-w-2xl mx-auto space-y-8 animate-pulse text-center pt-10">
                     <div className="space-y-4">
-                        <div className="h-8 bg-slate-100 rounded-lg w-3/4"></div>
-                        <div className="h-4 bg-slate-100 rounded w-1/4"></div>
+                        <div className="h-10 bg-slate-100 rounded-lg w-3/4 mx-auto"></div>
+                        <div className="h-5 bg-slate-100 rounded w-1/4 mx-auto"></div>
                     </div>
-                    <div className="space-y-3">
+                    <div className="space-y-4 pt-4 text-left">
                         <div className="h-4 bg-slate-100 rounded"></div>
                         <div className="h-4 bg-slate-100 rounded"></div>
                         <div className="h-4 bg-slate-100 rounded w-5/6"></div>
                         <div className="h-4 bg-slate-100 rounded"></div>
                         <div className="h-4 bg-slate-100 rounded w-4/5"></div>
                     </div>
+                    <p className="text-sm text-slate-500 font-medium mt-6 animate-pulse">{loadingStep}</p>
                 </div>
             ) : error ? (
                 <div className="flex flex-col items-center justify-center h-full text-center px-6">
@@ -203,10 +311,10 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ article, initialParsed
                     )}
                 </div>
             ) : (
-                <article className="prose prose-slate prose-lg max-w-3xl mx-auto font-serif">
+                <div className="max-w-2xl mx-auto">
                     {/* Featured Image (if available) */}
                     {(parsedData?.image || article.image) && (
-                         <div className="not-prose mb-8 rounded-xl overflow-hidden shadow-sm border border-slate-100">
+                         <div className="mb-8 rounded-xl overflow-hidden shadow-sm border border-slate-100">
                             <img 
                                 src={parsedData?.image || article.image} 
                                 alt={parsedData?.title || article.title} 
@@ -216,12 +324,16 @@ export const ReaderModal: React.FC<ReaderModalProps> = ({ article, initialParsed
                          </div>
                     )}
 
-                    <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight mb-4">
+                    <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight mb-6 font-sans">
                         {parsedData?.title || article.title}
                     </h1>
                     
-                    <div dangerouslySetInnerHTML={{ __html: getSourceContent() }} />
-                </article>
+                    {/* The Article Content with Custom Class */}
+                    <div 
+                        className="article-content"
+                        dangerouslySetInnerHTML={{ __html: getSourceContent() }} 
+                    />
+                </div>
             )}
         </div>
       </div>
