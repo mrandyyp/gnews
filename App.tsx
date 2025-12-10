@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { fetchNewsArticles, fetchTopics, fetchDiscoverArticles } from './services/newsService';
 import { Article, LocaleOption } from './types';
-import { ParsedArticle } from './services/readabilityService';
+import { ParsedArticle, fetchWordpressArticle } from './services/readabilityService';
 import { ArticleCard } from './components/ArticleCard';
 import { SkeletonLoader } from './components/SkeletonLoader';
 import { ReaderModal } from './components/ReaderModal';
@@ -24,13 +24,11 @@ const App: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [readingArticle, setReadingArticle] = useState<Article | null>(null);
   
-  // URL/Manual Input State
+  // URL Input State
   const [showUrlInput, setShowUrlInput] = useState(false);
-  // Added 'detik' to the import types
-  const [importMode, setImportMode] = useState<'url' | 'manual' | 'detik'>('url');
+  // 'manual' removed, 'wordpress' added
+  const [importMode, setImportMode] = useState<'url' | 'wordpress' | 'detik'>('url');
   const [inputUrl, setInputUrl] = useState('');
-  const [manualTitle, setManualTitle] = useState('');
-  const [manualContent, setManualContent] = useState('');
   const [importLocale, setImportLocale] = useState<LocaleOption>('id-ID');
   const [manualParsedData, setManualParsedData] = useState<ParsedArticle | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -182,7 +180,26 @@ const App: React.FC = () => {
         setManualParsedData(parsed);
         setReadingArticle(tempArticle);
 
-      } else if (importMode === 'url') {
+      } else if (importMode === 'wordpress') {
+          if (!inputUrl) throw new Error("URL is required");
+
+          // Use the dedicated WP fetcher logic directly
+          const parsed = await fetchWordpressArticle(inputUrl);
+
+          const tempArticle: Article = {
+              url: inputUrl,
+              title: parsed.title,
+              source: parsed.siteName || 'Wordpress Site',
+              date: new Date().toLocaleDateString(),
+              image: parsed.image || '',
+              timestamp: Date.now()
+          };
+          
+          setManualParsedData(parsed);
+          setReadingArticle(tempArticle);
+
+      } else {
+          // Standard URL Import
           if (!inputUrl) throw new Error("URL is required");
           const tempArticle: Article = {
               url: inputUrl,
@@ -192,44 +209,15 @@ const App: React.FC = () => {
               image: '',
               timestamp: Date.now()
           };
-          setManualParsedData(null); // Clear manual data
-          setReadingArticle(tempArticle);
-      } else {
-          // Manual
-          if (!manualTitle || !manualContent) throw new Error("Title and Content are required");
-          const tempArticle: Article = {
-              url: '',
-              title: manualTitle,
-              source: 'Manual Input',
-              date: new Date().toLocaleDateString(),
-              image: '',
-              timestamp: Date.now()
-          };
-          
-          // Construct pre-parsed data
-          const parsed: ParsedArticle = {
-              title: manualTitle,
-              content: manualContent, // Treat as HTML/Text
-              textContent: manualContent,
-              excerpt: manualContent.substring(0, 100) + '...',
-              byline: 'User Input',
-              siteName: 'Manual Source',
-              url: '',
-              image: '',
-              format: 'html'
-          };
-
-          setManualParsedData(parsed);
+          setManualParsedData(null); // Clear manual data, let ReaderModal fetch via standard parser
           setReadingArticle(tempArticle);
       }
 
       setShowUrlInput(false);
       setInputUrl('');
-      setManualTitle('');
-      setManualContent('');
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Failed to process import. Please check the URL or input.");
+      alert(`Failed to process import: ${err.message || 'Unknown error'}`);
     } finally {
       setIsProcessing(false);
     }
@@ -249,7 +237,7 @@ const App: React.FC = () => {
     );
   }, [articles, searchTerm]);
 
-  const openImportModal = (mode: 'url' | 'manual' | 'detik' = 'url') => {
+  const openImportModal = (mode: 'url' | 'wordpress' | 'detik' = 'url') => {
       setImportLocale(selectedLocale);
       setImportMode(mode);
       setShowUrlInput(true);
@@ -298,11 +286,7 @@ const App: React.FC = () => {
                     </button>
                 </div>
 
-                {/* Tabs - Only show if not in specific Detik mode or if we want to allow switching. 
-                    Let's hide tabs if in Detik mode for focus, or just allow switching.
-                    User request: "tombol import detik di selah tombol import source", implies distinct action. 
-                    I'll hide the generic tabs if Detik is selected to keep the UI clean for that specific task.
-                */}
+                {/* Tabs */}
                 {importMode !== 'detik' && (
                     <div className="flex border-b border-slate-100 bg-slate-50/50 shrink-0">
                         <button
@@ -314,10 +298,10 @@ const App: React.FC = () => {
                         </button>
                         <button
                             type="button"
-                            onClick={() => setImportMode('manual')}
-                            className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${importMode === 'manual' ? 'border-primary-600 text-primary-700 bg-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                            onClick={() => setImportMode('wordpress')}
+                            className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${importMode === 'wordpress' ? 'border-primary-600 text-primary-700 bg-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
                         >
-                            Manual Input
+                            Wordpress Import
                         </button>
                     </div>
                 )}
@@ -325,55 +309,36 @@ const App: React.FC = () => {
                 <form onSubmit={handleImportSubmit} className="p-6 overflow-y-auto">
                     <div className="space-y-4">
                         
-                        {(importMode === 'url' || importMode === 'detik') ? (
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">
-                                    {importMode === 'detik' ? 'Paste Detik/Partner URL' : 'Paste Article URL'}
-                                </label>
-                                <div className="relative">
-                                    <input 
-                                        type="url" 
-                                        required
-                                        placeholder="https://..." 
-                                        value={inputUrl}
-                                        onChange={(e) => setInputUrl(e.target.value)}
-                                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all text-sm"
-                                        autoFocus
-                                    />
-                                    <svg className="w-5 h-5 text-slate-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
-                                </div>
-                                {importMode === 'detik' && (
-                                    <p className="text-xs text-slate-500 mt-2">
-                                        Compatible with bola.net and detik network URLs.
-                                    </p>
-                                )}
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-2">
+                                {importMode === 'detik' ? 'Paste Detik/Partner URL' : 
+                                 importMode === 'wordpress' ? 'Paste Wordpress Post URL' : 
+                                 'Paste Article URL'}
+                            </label>
+                            <div className="relative">
+                                <input 
+                                    type="url" 
+                                    required
+                                    placeholder={importMode === 'wordpress' ? "https://example.com/post-slug" : "https://..."} 
+                                    value={inputUrl}
+                                    onChange={(e) => setInputUrl(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all text-sm"
+                                    autoFocus
+                                />
+                                <svg className="w-5 h-5 text-slate-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
                             </div>
-                        ) : (
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-2">Article Title</label>
-                                    <input 
-                                        type="text" 
-                                        required
-                                        placeholder="Enter title here..." 
-                                        value={manualTitle}
-                                        onChange={(e) => setManualTitle(e.target.value)}
-                                        className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all text-sm font-bold"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-2">Article Content</label>
-                                    <textarea 
-                                        required
-                                        placeholder="Paste article content here..." 
-                                        value={manualContent}
-                                        onChange={(e) => setManualContent(e.target.value)}
-                                        rows={6}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all text-sm"
-                                    />
-                                </div>
-                            </div>
-                        )}
+                            
+                            {importMode === 'detik' && (
+                                <p className="text-xs text-slate-500 mt-2">
+                                    Compatible with bola.net and detik network URLs.
+                                </p>
+                            )}
+                            {importMode === 'wordpress' && (
+                                <p className="text-xs text-slate-500 mt-2">
+                                    Extracts content using WP JSON API (v2). URL must be a valid post link.
+                                </p>
+                            )}
+                        </div>
 
                         {importMode !== 'detik' && (
                         <div className="pt-2">
